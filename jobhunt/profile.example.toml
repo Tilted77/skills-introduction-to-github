@@ -1,0 +1,29 @@
+# Your details, typed into application forms. Copy to profile.toml and edit.
+# profile.toml and your resume are listed in .gitignore, so git will not upload them.
+
+first_name = "Ada"
+last_name = "Lovelace"
+email = "ada@example.com"
+phone = "+1 555 010 0199"
+location = "New York, NY"
+linkedin = "https://www.linkedin.com/in/your-handle"
+github = ""
+website = ""
+current_company = ""
+current_title = ""
+
+# The file attached to each application. A path next to this file, or a full path.
+resume_pdf = "resume.pdf"
+
+# Optional: a plain-text or Markdown copy of the resume for the AI to read.
+# Leave empty and the text is extracted from the PDF.
+resume_text = ""
+
+# Answers to questions that come up on many forms. When a question's label contains the
+# text on the left, the answer on the right is typed in (or chosen, in a plain dropdown).
+# Only add answers that are true for every job you apply to.
+[answers]
+"how did you hear" = "Company careers page"
+# "authorized to work" = "Yes"
+# "require sponsorship" = "No"
+# "pronouns" = "they/them"

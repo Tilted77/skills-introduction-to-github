@@ -1,0 +1,11 @@
+# Personal data: never commit these.
+config.toml
+profile.toml
+resume.*
+data/
+browser-profile/
+
+# Local tooling
+.venv/
+__pycache__/
+*.pyc

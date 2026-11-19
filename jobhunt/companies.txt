@@ -1,0 +1,65 @@
+# One job board per line, as source:name. Every entry here was checked and had open jobs.
+# This starter list leans towards tech companies. Replace it with employers in your field:
+#   python -m jobhunt companies <name> <name> ...
+# looks each name up on Greenhouse, Lever and Ashby and appends the boards it finds.
+# The name is the one in the company's careers-page URL, e.g. jobs.lever.co/spotify -> spotify.
+
+greenhouse:affirm
+greenhouse:airbnb
+greenhouse:airtable
+greenhouse:anthropic
+greenhouse:asana
+greenhouse:brex
+greenhouse:chime
+greenhouse:cloudflare
+greenhouse:coinbase
+greenhouse:databricks
+greenhouse:datadog
+greenhouse:discord
+greenhouse:dropbox
+greenhouse:duolingo
+greenhouse:elastic
+greenhouse:figma
+greenhouse:flexport
+greenhouse:gitlab
+greenhouse:gusto
+greenhouse:instacart
+greenhouse:lyft
+greenhouse:mercury
+greenhouse:mongodb
+greenhouse:okta
+greenhouse:oscar
+greenhouse:peloton
+greenhouse:pinterest
+greenhouse:reddit
+greenhouse:robinhood
+greenhouse:samsara
+greenhouse:scaleai
+greenhouse:sofi
+greenhouse:squarespace
+greenhouse:stripe
+greenhouse:toast
+greenhouse:twilio
+greenhouse:vercel
+
+lever:lyrahealth
+lever:palantir
+lever:ro
+lever:spotify
+
+ashby:benchling
+ashby:cohere
+ashby:cursor
+ashby:headway
+ashby:linear
+ashby:notion
+ashby:openai
+ashby:perplexity
+ashby:plaid
+ashby:posthog
+ashby:ramp
+ashby:replit
+ashby:sentry
+ashby:supabase
+ashby:webflow
+ashby:zapier

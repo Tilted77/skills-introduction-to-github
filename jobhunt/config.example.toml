@@ -1,0 +1,35 @@
+# What you are looking for. Copy to config.toml (`python -m jobhunt init` does this) and edit.
+
+[search]
+# A job is kept when its title contains any of these. Whole words, any capitalisation:
+# "intern" matches "Intern" and "Interns" but not "Internal" or "Internship".
+titles = ["software engineer", "backend engineer", "full stack engineer"]
+
+# ...and none of these.
+exclude_titles = ["staff", "principal", "director", "manager", "intern", "internship"]
+
+# Kept when the job's location contains any of these. "remote" matches remote roles.
+# Leave empty ( locations = [] ) to accept anywhere.
+locations = ["remote", "new york"]
+
+# Ignore postings older than this many days.
+max_age_days = 60
+
+# Only used by `score --no-llm`: the score is the share of these found in the posting.
+keywords = ["python", "sql", "aws", "api"]
+
+[scoring]
+# Jobs scoring below this are dropped from the queue.
+min_score = 70
+
+# Anything the scorer should know that is not on your resume. Plain sentences.
+preferences = """
+I need visa sponsorship: no. Minimum salary: none stated.
+I am open to hybrid in New York and fully remote in the US.
+"""
+
+model = "claude-opus-5-5"
+
+[apply]
+# `apply` stops after this many submitted applications in one day.
+daily_limit = 25
