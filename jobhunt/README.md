@@ -103,8 +103,10 @@ queued to apply to the same job twice.
 Workday works differently from the other three, in two ways.
 
 **Reading jobs is slow.** Workday pauses anyone who asks too fast, so the tool asks about once a
-second and waits when told to. The first `fetch` can take several minutes. Later runs are quick,
-because the tool remembers what it has read and stops at the first page of familiar postings.
+second and waits when told to. The first `fetch` can take several minutes. If Workday keeps
+refusing, the tool stops reading that site, says it was paused, and continues from the same place
+the next time you run `fetch`. Later runs are quick, because the tool remembers what it has read
+and stops at the first page of familiar postings.
 Only postings from the last 30 days are read: beyond that Workday does not give a date.
 
 **Applying needs an account with each employer.** `apply` opens the job page and stops. Press

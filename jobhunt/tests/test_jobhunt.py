@@ -107,6 +107,9 @@ class Workday(unittest.TestCase):
         job = sources.parse_workday(self.TOKEN, WORKDAY_DETAIL)
         self.assertEqual(job.id, f"workday:{self.TOKEN}:Manager--Community-Outreach_R141681-2")
         self.assertEqual(job.company_name, "The Ohio State University")
+        coded = WORKDAY_DETAIL | {"hiringOrganization": {"name": "10 Nationwide Children's Hospital"}}
+        self.assertEqual(sources.parse_workday(self.TOKEN, coded).company_name, "Nationwide Children's Hospital")
+        self.assertEqual(sources.parse_workday(self.TOKEN, WORKDAY_DETAIL | {"hiringOrganization": {}}).company_name, "osu")
         self.assertEqual(job.location, "Columbus Campus; Newark Campus; United States of America")
         self.assertFalse(job.remote)  # hybrid is not remote
         self.assertEqual(job.posted_at, "2026-11-20")
@@ -133,14 +136,15 @@ class Workday(unittest.TestCase):
         self.addCleanup(lambda: setattr(sources, "_get_json", real[0]) or setattr(sources, "WORKDAY_GAP", real[1])
                         or setattr(sources, "WORKDAY_WAITS", real[2]))
         search = Search(titles=["community"], exclude_titles=["engineer"])
-        total, jobs, read = sources.fetch_company("workday", self.TOKEN, search)
-        self.assertEqual((total, len(jobs), read), (3, 1, ["/job/a", "/job/b", "/job/c"]))
+        got = sources.fetch_company("workday", self.TOKEN, search)
+        self.assertEqual((got.total, len(got.jobs), got.read, got.resume), (3, 1, ["/job/a", "/job/b", "/job/c"], None))
         api = "https://osu.wd1.myworkdayjobs.com/wday/cxs/osu/OSUCareers"
         self.assertEqual(calls, [f"{api}/jobs", f"{api}/jobs", f"{api}/job/a"])
 
         # Second run: everything on the page was seen before, so no job page is opened again.
         del calls[:]
-        self.assertEqual(sources.fetch_company("workday", self.TOKEN, search, set(read)), (3, [], []))
+        again = sources.fetch_company("workday", self.TOKEN, search, set(got.read))
+        self.assertEqual((again.total, again.jobs, again.read), (3, [], []))
         self.assertEqual(calls, [f"{api}/jobs"])
 
     def test_stops_at_postings_older_than_thirty_days(self):
@@ -159,8 +163,36 @@ class Workday(unittest.TestCase):
         real = sources._get_json, sources.WORKDAY_GAP
         sources._get_json, sources.WORKDAY_GAP = fake, 0
         self.addCleanup(lambda: setattr(sources, "_get_json", real[0]) or setattr(sources, "WORKDAY_GAP", real[1]))
-        total, jobs, read = sources.fetch_workday(self.TOKEN, Search(titles=["community"]), set())
-        self.assertEqual((total, len(jobs), len(read), offsets), (500, 20, 40, [0, 20]))
+        got = sources.fetch_workday(self.TOKEN, Search(titles=["community"]), set())
+        self.assertEqual((got.total, len(got.jobs), len(got.read), offsets), (500, 20, 40, [0, 20]))
+
+    def test_a_paused_read_keeps_its_progress_and_continues_next_run(self):
+        def posting(n):
+            return {"title": f"Nurse {n}", "externalPath": f"/job/{n}", "postedOn": "Posted 3 Days Ago"}
+        pages = {offset: [posting(offset + i) for i in range(20)] for offset in range(0, 100, 20)}
+        blocked, offsets = {40}, []
+
+        def fake(url, body=None):
+            offsets.append(body["offset"])
+            if body["offset"] in blocked:
+                error = sources.FeedError("HTTP 429")
+                error.code = 429
+                raise error
+            return {"total": 100, "jobPostings": pages[body["offset"]]}
+
+        real = sources._get_json, sources.WORKDAY_GAP, sources.WORKDAY_WAITS
+        sources._get_json, sources.WORKDAY_GAP, sources.WORKDAY_WAITS = fake, 0, ()
+        self.addCleanup(lambda: setattr(sources, "_get_json", real[0]) or setattr(sources, "WORKDAY_GAP", real[1])
+                        or setattr(sources, "WORKDAY_WAITS", real[2]))
+        search = Search(titles=["community"])
+        first = sources.fetch_workday(self.TOKEN, search, set())
+        self.assertEqual((len(first.read), first.resume, offsets), (40, 40, [0, 20, 40]))
+
+        # Next run: one look at the newest page, then straight back to where it stopped (one page of overlap).
+        blocked.clear()
+        del offsets[:]
+        second = sources.fetch_workday(self.TOKEN, search, set(first.read), first.resume)
+        self.assertEqual((len(second.read), second.resume, offsets), (60, None, [0, 20, 40, 60, 80]))
 
 
 class Filtering(unittest.TestCase):
@@ -211,9 +243,11 @@ class Tracker(unittest.TestCase):
         self.assertEqual(self.store.counts(), {"new": 2})
 
     def test_workday_memory_is_cleared_when_the_title_filter_changes(self):
-        self.store.add_workday_seen("site", ["/job/a", "/job/b"], "titles-v1")
-        self.assertEqual(self.store.workday_seen("titles-v1"), {"site": {"/job/a", "/job/b"}})
-        self.assertEqual(self.store.workday_seen("titles-v2"), {})
+        self.store.save_workday_progress("site", ["/job/a", "/job/b"], 40, "titles-v1")
+        self.assertEqual(self.store.workday_progress("titles-v1"), ({"site": {"/job/a", "/job/b"}}, {"site": 40}))
+        self.store.save_workday_progress("site", ["/job/c"], None, "titles-v1")  # finished: nothing to resume
+        self.assertEqual(self.store.workday_progress("titles-v1")[1], {})
+        self.assertEqual(self.store.workday_progress("titles-v2"), ({}, {}))
 
     def test_low_score_is_skipped_and_applied_counts_today(self):
         self.store.add_jobs(self.jobs)
@@ -236,11 +270,11 @@ class FetchCommand(unittest.TestCase):
         board = {"jobs": [GREENHOUSE["jobs"][0] | {"title": "Community Manager"}, GREENHOUSE["jobs"][0] | {"id": 2}]}
         asked = []
 
-        def fake(source, token, search=None, seen=None):
-            asked.append((source, seen))
+        def fake(source, token, search=None, seen=None, resume=None):
+            asked.append((source, seen, resume))
             if source == "workday":
-                return 5, [sources.parse_workday(site, WORKDAY_DETAIL)], ["/job/a", "/job/b"]
-            return 2, sources.parse_greenhouse(token, board), []
+                return sources.Fetched(5, [sources.parse_workday(site, WORKDAY_DETAIL)], ["/job/a", "/job/b"], resume=40)
+            return sources.Fetched(2, sources.parse_greenhouse(token, board))
 
         settings = config.Settings(search=Search(titles=["community"], max_age_days=0))
         with mock.patch.object(cli.config, "load_settings", lambda: settings), \
@@ -250,9 +284,10 @@ class FetchCommand(unittest.TestCase):
                 with contextlib.redirect_stdout(io.StringIO()) as out:
                     self.assertEqual(cli.main(["fetch"]), 0)
         self.assertIn("7 postings from 2 boards: 2 match", out.getvalue())
+        self.assertIn("paused by Workday", out.getvalue())
         self.assertEqual(db.counts(), {"new": 2})
-        # The second run was told which Workday postings the first one had read.
-        self.assertEqual([seen for source, seen in asked if source == "workday"], [None, {"/job/a", "/job/b"}])
+        # The second run was told what the first one had read and where it was paused.
+        self.assertEqual([a[1:] for a in asked if a[0] == "workday"], [(None, None), ({"/job/a", "/job/b"}, 40)])
 
 
 class Config(unittest.TestCase):

@@ -13,7 +13,7 @@ import urllib.parse
 import threading
 import time
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 
@@ -40,6 +40,14 @@ class Job:
     apply_url: str     # application form
     description: str   # plain text
     posted_at: str     # ISO date, or ""
+
+
+@dataclass
+class Fetched:
+    total: int = 0                                    # open postings on the board
+    jobs: list[Job] = field(default_factory=list)
+    read: list[str] = field(default_factory=list)     # Workday: paths of postings read for the first time
+    resume: int | None = None                         # Workday: where to continue if it paused us
 
 
 class _Text(HTMLParser):
@@ -186,7 +194,7 @@ WORKDAY_PAGE = 20
 WORKDAY_MAX = 6000
 WORKDAY_OLD = "30+"                    # as in "Posted 30+ Days Ago"
 WORKDAY_GAP = 1.0                      # seconds between requests
-WORKDAY_WAITS = (5, 10, 20, 40, 60)    # pauses before retrying after "too many requests"
+WORKDAY_WAITS = (5, 15, 30)            # pauses before retrying after "too many requests"
 _workday_lock = threading.Lock()
 
 
@@ -237,7 +245,9 @@ def parse_workday(token: str, detail: dict) -> Job:
     remote_type = (info.get("remoteType") or "").lower()
     return Job(
         id=f"workday:{token}:{info.get('jobPostingId') or info.get('id')}", source="workday", company=token,
-        company_name=(detail.get("hiringOrganization") or {}).get("name") or token.split(".")[0],
+        # Some employers prefix the name with an internal entity code ("10 Nationwide Children's Hospital").
+        company_name=re.sub(r"^(?=\S*\d)\S+\s+", "", (detail.get("hiringOrganization") or {}).get("name") or "")
+        or token.split(".")[0],
         title=(info.get("title") or "").strip(), location=location,
         remote=("remote" in remote_type and "hybrid" not in remote_type) or "remote" in location.lower(),
         url=url, apply_url=f"{url}/apply" if url else "",
@@ -245,42 +255,59 @@ def parse_workday(token: str, detail: dict) -> Job:
     )
 
 
-def fetch_workday(token: str, search: Search, seen: set[str]) -> tuple[int, list[Job], list[str]]:
-    """(open postings on the site, details of new title matches, paths of every new posting read).
+def fetch_workday(token: str, search: Search, seen: set[str], resume: int | None = None) -> Fetched:
+    """Read a Workday site's new postings and open the ones whose title matches.
 
-    `seen` holds the paths read on earlier runs. The caller saves the returned paths only once
-    this returns, so a run that fails part-way is simply repeated next time.
+    `seen` holds the paths read on earlier runs. `resume` is where an earlier run was paused by
+    Workday: this run first reads the newest postings, then jumps there and carries on.
+    If Workday pauses us again, the result says where to resume.
     """
-    total, offset, fresh, wanted = None, 0, [], []
-    while total is None or offset < min(total, WORKDAY_MAX):
-        data = _workday_page(token, offset)
-        if total is None:  # Workday reports the total on the first page only
-            total = int(data.get("total") or 0)
-        postings = [p for p in data.get("jobPostings") or [] if p.get("title") and p.get("externalPath")]
-        new = [p for p in postings if p["externalPath"] not in seen]
-        recent = [p for p in new if WORKDAY_OLD not in (p.get("postedOn") or "")]
-        fresh += [p["externalPath"] for p in new]
-        wanted += [p for p in recent if title_matches(p["title"], search)]
-        # Newest first: once a whole page is old or already seen, the rest is too.
-        if not postings or not recent:
-            break
-        offset += WORKDAY_PAGE
-    api = _workday_api(token)
-    jobs = [parse_workday(token, _workday_json(api + p["externalPath"])) for p in wanted]
-    return total or 0, jobs, fresh
+    api, out, offset = _workday_api(token), Fetched(), 0
+    try:
+        while out.total == 0 or offset < min(out.total, WORKDAY_MAX):
+            data = _workday_page(token, offset)
+            if offset == 0:  # Workday reports the total on the first page only
+                out.total = int(data.get("total") or 0)
+            postings = [p for p in data.get("jobPostings") or [] if p.get("title") and p.get("externalPath")]
+            recent = [p for p in postings if WORKDAY_OLD not in (p.get("postedOn") or "")]
+            new = [p for p in recent if p["externalPath"] not in seen]
+            for p in new:
+                if title_matches(p["title"], search):
+                    out.jobs.append(parse_workday(token, _workday_json(api + p["externalPath"])))
+            out.read += [p["externalPath"] for p in postings if p["externalPath"] not in seen]
+            if not recent:
+                break  # newest first: a page of old postings means the rest are old too
+            if not new:  # a page we have read before
+                if resume is None or offset >= resume:
+                    break
+                # Skip ahead to where the paused run stopped, with one page of overlap.
+                offset = max(offset + WORKDAY_PAGE, resume - WORKDAY_PAGE)
+                continue
+            offset += WORKDAY_PAGE
+    except FeedError as e:
+        if e.code != 429:
+            raise
+        # Postings on the unfinished page stay unread, so the next run opens them again.
+        if resume is not None and offset < resume - WORKDAY_PAGE:
+            # Paused while still catching up on the newest postings: forget this run's reading, so
+            # the next one starts from the top again and none of the new postings are skipped.
+            out.read, out.resume = [], resume
+        else:
+            out.resume = offset if resume is None else max(offset, resume)
+    return out
 
 
 def fetch_company(source: str, token: str, search: Search | None = None,
-                  seen: set[str] | None = None) -> tuple[int, list[Job], list[str]]:
-    """(open postings, jobs, newly read Workday paths). Workday needs `search` and returns only
-    new title matches; the other boards return everything and the caller filters."""
+                  seen: set[str] | None = None, resume: int | None = None) -> Fetched:
+    """Workday needs `search` and returns only new title matches; the other boards return
+    everything and the caller filters."""
     if source == "workday":
         if search is None:
-            return workday_total(token), [], []
-        return fetch_workday(token, search, seen or set())
+            return Fetched(total=workday_total(token))
+        return fetch_workday(token, search, seen or set(), resume)
     url, parse = FEEDS[source]
     jobs = parse(token, _get_json(url.format(urllib.parse.quote(token))))
-    return len(jobs), jobs, []
+    return Fetched(total=len(jobs), jobs=jobs)
 
 
 def matches(job: Job, search: Search, today: datetime | None = None) -> bool:

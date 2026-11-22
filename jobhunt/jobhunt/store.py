@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 # Workday postings already read, so later runs stop at the first page of familiar ones.
 # `search` records which title filter was in force: change the titles and the memory is cleared.
 SEEN_SCHEMA = "CREATE TABLE IF NOT EXISTS workday_seen (site TEXT, path TEXT, search TEXT, PRIMARY KEY (site, path))"
+# Where to continue on a Workday site whose last read was cut short by its rate limit.
+RESUME_SCHEMA = "CREATE TABLE IF NOT EXISTS workday_resume (site TEXT PRIMARY KEY, offset INTEGER, search TEXT)"
 JOB_FIELDS = ("source", "company", "company_name", "title", "location", "remote",
               "url", "apply_url", "description", "posted_at")
 
@@ -36,20 +38,28 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute(SCHEMA)
         self.db.execute(SEEN_SCHEMA)
+        self.db.execute(RESUME_SCHEMA)
         self.db.commit()
 
-    def workday_seen(self, search_key: str) -> dict[str, set[str]]:
-        """site -> paths already read under this title filter. Forgets everything read under another."""
-        self.db.execute("DELETE FROM workday_seen WHERE search != ?", (search_key,))
+    def workday_progress(self, search_key: str) -> tuple[dict[str, set[str]], dict[str, int]]:
+        """(site -> paths already read, site -> where a paused read should continue).
+
+        Both belong to one title filter: change the titles and they are forgotten.
+        """
+        for table in ("workday_seen", "workday_resume"):
+            self.db.execute(f"DELETE FROM {table} WHERE search != ?", (search_key,))
         self.db.commit()
         seen: dict[str, set[str]] = {}
         for site, path in self.db.execute("SELECT site, path FROM workday_seen"):
             seen.setdefault(site, set()).add(path)
-        return seen
+        return seen, dict(self.db.execute("SELECT site, offset FROM workday_resume").fetchall())
 
-    def add_workday_seen(self, site: str, paths: list[str], search_key: str) -> None:
+    def save_workday_progress(self, site: str, paths: list[str], resume: int | None, search_key: str) -> None:
         self.db.executemany("INSERT OR IGNORE INTO workday_seen VALUES (?, ?, ?)",
                             [(site, path, search_key) for path in paths])
+        self.db.execute("DELETE FROM workday_resume WHERE site = ?", (site,))
+        if resume is not None:
+            self.db.execute("INSERT INTO workday_resume VALUES (?, ?, ?)", (site, resume, search_key))
         self.db.commit()
 
     def add_jobs(self, jobs: list[Job]) -> tuple[int, int]:

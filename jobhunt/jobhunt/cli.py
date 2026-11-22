@@ -64,7 +64,7 @@ def cmd_companies(args) -> None:
             hits = []
             for source in ("greenhouse", "lever", "ashby"):
                 try:
-                    count = sources.fetch_company(source, token)[0]
+                    count = sources.fetch_company(source, token).total
                 except sources.FeedError:
                     continue
                 if count:
@@ -88,30 +88,37 @@ def cmd_fetch(args) -> None:
     db = store()
 
     search_key = json.dumps([settings.search.titles, settings.search.exclude_titles])
-    read_before = db.workday_seen(search_key)
+    read_before, resume_at = db.workday_progress(search_key)
     if any(source == "workday" for source, _ in companies):
         print("Workday sites limit how fast they can be read. The first run takes several minutes; later runs are quick.")
 
     def pull(pair):
         try:
-            return pair, *sources.fetch_company(*pair, settings.search, read_before.get(pair[1])), None
+            token = pair[1]
+            return pair, sources.fetch_company(*pair, settings.search, read_before.get(token), resume_at.get(token)), None
         except sources.FeedError as e:
-            return pair, 0, [], [], str(e)
+            return pair, None, str(e)
 
-    seen = matched = added = repeats = 0
+    seen = matched = added = repeats = paused = 0
     with ThreadPoolExecutor(max_workers=8) as pool:
-        for (source, token), total, jobs, read, error in pool.map(pull, companies):
+        for (source, token), got, error in pool.map(pull, companies):
             if error:
                 print(f"  {source}:{token}  failed: {error}", flush=True)
                 continue
-            keep = [j for j in jobs if sources.matches(j, settings.search)]
+            total = got.total
+            keep = [j for j in got.jobs if sources.matches(j, settings.search)]
             new, same_role = db.add_jobs(keep)
             if source == "workday":
-                db.add_workday_seen(token, read, search_key)
+                db.save_workday_progress(token, got.read, got.resume, search_key)
+                paused += got.resume is not None
             seen, matched, added, repeats = seen + total, matched + len(keep), added + new, repeats + same_role
-            print(f"  {source}:{token}  {total} open, {len(keep)} match, {new} new", flush=True)
+            print(f"  {source}:{token}  {total} open, {len(keep)} match, {new} new"
+                  + ("  (paused by Workday, not finished)" if got.resume is not None else ""), flush=True)
     print(f"Read {seen} postings from {len(companies)} boards: {matched} match your search, {added} are new."
           + (f" Ignored {repeats} repeat listings of a role already tracked." if repeats else ""))
+    if paused:
+        print(f"{paused} Workday site(s) paused us before we finished. Run `python -m jobhunt fetch` again "
+              "later and it continues where it stopped.")
     if added:
         print("Next: `python -m jobhunt score`")
 
