@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCES = ("greenhouse", "lever", "ashby")
+SOURCES = ("greenhouse", "lever", "ashby", "workday")
 
 
 class ConfigError(Exception):
@@ -51,6 +51,11 @@ class Profile:
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}".strip()
+
+    @property
+    def city(self) -> str:
+        """ "Columbus, OH" -> "Columbus", for forms that ask for the city on its own."""
+        return self.location.split(",")[0].strip()
 
 
 def _read_toml(path: Path, example: str) -> dict:
@@ -140,6 +145,9 @@ def parse_company_line(line: str) -> tuple[str, str] | None:
     source, _, token = line.partition(":")
     if source not in SOURCES or not token.strip():
         raise ValueError(line)
+    if source == "workday":
+        from .sources import workday_token
+        return source, workday_token(token)
     return source, token.strip()
 
 
@@ -152,8 +160,8 @@ def load_companies(root: Path = ROOT) -> list[tuple[str, str]]:
         try:
             pair = parse_company_line(line)
         except ValueError:
-            raise ConfigError(f"companies.txt line {n}: expected `greenhouse:name`, `lever:name` "
-                              f"or `ashby:name`, got {line.strip()!r}.") from None
+            raise ConfigError(f"companies.txt line {n}: expected `greenhouse:name`, `lever:name`, `ashby:name` "
+                              f"or `workday:host/site`, got {line.strip()!r}.") from None
         if pair and pair not in out:
             out.append(pair)
     return out

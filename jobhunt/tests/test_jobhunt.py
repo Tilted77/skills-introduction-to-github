@@ -38,9 +38,21 @@ ASHBY = {"jobs": [
 ]}
 
 
+WORKDAY_DETAIL = {
+    "jobPostingInfo": {
+        "id": "a91b", "title": "Manager, Community Outreach", "location": "Columbus Campus",
+        "additionalLocations": ["Newark Campus"], "country": {"descriptor": "United States of America"},
+        "jobDescription": "<p>Lead outreach.</p><ul><li>Build partnerships</li></ul>", "startDate": "2026-11-20",
+        "jobPostingId": "Manager--Community-Outreach_R141681-2", "remoteType": "Hybrid Remote",
+        "externalUrl": "https://osu.wd1.myworkdayjobs.com/OSUCareers/job/Columbus-Campus/Manager--Community-Outreach_R141681-2",
+    },
+    "hiringOrganization": {"name": "The Ohio State University", "url": ""},
+}
+
+
 def profile(**extra) -> Profile:
     base = dict(first_name="Ada", last_name="Lovelace", email="ada@example.com", phone="+1 555 0100",
-                location="London", linkedin="https://linkedin.com/in/ada", current_company="Analytical Engines")
+                location="London, UK", linkedin="https://linkedin.com/in/ada", current_company="Analytical Engines")
     return Profile(**(base | extra))
 
 
@@ -79,6 +91,78 @@ class Feeds(unittest.TestCase):
         self.assertFalse(sources.parse_ashby("ramp", data)[0].remote)
 
 
+class Workday(unittest.TestCase):
+    TOKEN = "osu.wd1.myworkdayjobs.com/OSUCareers"
+
+    def test_address_forms(self):
+        for text in ("https://osu.wd1.myworkdayjobs.com/en-US/OSUCareers/jobs", "osu.wd1.myworkdayjobs.com/OSUCareers",
+                     "https://OSU.wd1.myworkdayjobs.com/OSUCareers/job/Columbus-Campus/Some-Job_R1?q=x"):
+            self.assertEqual(sources.workday_token(text), self.TOKEN)
+        for bad in ("https://example.com/OSUCareers", "osu.wd1.myworkdayjobs.com", "https://osu.wd1.myworkdayjobs.com/en-US"):
+            with self.assertRaises(ValueError):
+                sources.workday_token(bad)
+        self.assertEqual(config.parse_company_line(f"workday:https://{self.TOKEN}  # OSU"), ("workday", self.TOKEN))
+
+    def test_job_details(self):
+        job = sources.parse_workday(self.TOKEN, WORKDAY_DETAIL)
+        self.assertEqual(job.id, f"workday:{self.TOKEN}:Manager--Community-Outreach_R141681-2")
+        self.assertEqual(job.company_name, "The Ohio State University")
+        self.assertEqual(job.location, "Columbus Campus; Newark Campus; United States of America")
+        self.assertFalse(job.remote)  # hybrid is not remote
+        self.assertEqual(job.posted_at, "2026-11-20")
+        self.assertTrue(job.apply_url.endswith("_R141681-2/apply"))
+        self.assertIn("- Build partnerships", job.description)
+
+    def test_only_matching_titles_are_opened_and_slow_down_is_retried(self):
+        listing = {"total": 3, "jobPostings": [
+            {"title": "Manager, Community Outreach", "externalPath": "/job/a"},
+            {"title": "Staff Nurse", "externalPath": "/job/b"},
+            {"title": "Community Engineer", "externalPath": "/job/c"}]}
+        calls, fail_once = [], [True]
+
+        def fake(url, body=None):
+            calls.append(url)
+            if fail_once and fail_once.pop():
+                error = sources.FeedError("HTTP 429")
+                error.code = 429
+                raise error
+            return listing if url.endswith("/jobs") else WORKDAY_DETAIL
+
+        real = sources._get_json, sources.WORKDAY_GAP, sources.WORKDAY_WAITS
+        sources._get_json, sources.WORKDAY_GAP, sources.WORKDAY_WAITS = fake, 0, (0, 0)
+        self.addCleanup(lambda: setattr(sources, "_get_json", real[0]) or setattr(sources, "WORKDAY_GAP", real[1])
+                        or setattr(sources, "WORKDAY_WAITS", real[2]))
+        search = Search(titles=["community"], exclude_titles=["engineer"])
+        total, jobs, read = sources.fetch_company("workday", self.TOKEN, search)
+        self.assertEqual((total, len(jobs), read), (3, 1, ["/job/a", "/job/b", "/job/c"]))
+        api = "https://osu.wd1.myworkdayjobs.com/wday/cxs/osu/OSUCareers"
+        self.assertEqual(calls, [f"{api}/jobs", f"{api}/jobs", f"{api}/job/a"])
+
+        # Second run: everything on the page was seen before, so no job page is opened again.
+        del calls[:]
+        self.assertEqual(sources.fetch_company("workday", self.TOKEN, search, set(read)), (3, [], []))
+        self.assertEqual(calls, [f"{api}/jobs"])
+
+    def test_stops_at_postings_older_than_thirty_days(self):
+        pages = {0: [{"title": f"Community Lead {i}", "externalPath": f"/job/new{i}", "postedOn": "Posted 3 Days Ago"}
+                     for i in range(20)],
+                 20: [{"title": f"Community Lead {i}", "externalPath": f"/job/old{i}", "postedOn": "Posted 30+ Days Ago"}
+                      for i in range(20)]}
+        offsets = []
+
+        def fake(url, body=None):
+            if body is None:
+                return WORKDAY_DETAIL
+            offsets.append(body["offset"])
+            return {"total": 500 if body["offset"] == 0 else 0, "jobPostings": pages[body["offset"]]}
+
+        real = sources._get_json, sources.WORKDAY_GAP
+        sources._get_json, sources.WORKDAY_GAP = fake, 0
+        self.addCleanup(lambda: setattr(sources, "_get_json", real[0]) or setattr(sources, "WORKDAY_GAP", real[1]))
+        total, jobs, read = sources.fetch_workday(self.TOKEN, Search(titles=["community"]), set())
+        self.assertEqual((total, len(jobs), len(read), offsets), (500, 20, 40, [0, 20]))
+
+
 class Filtering(unittest.TestCase):
     def job(self, title, location="New York", remote=False, posted="2026-11-01"):
         return sources.Job("x:y:1", "x", "y", "Y", title, location, remote, "", "", "", posted)
@@ -111,6 +195,7 @@ class Tracker(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.store = Store(Path(self.tmp.name) / "jobs.db")
+        self.addCleanup(self.store.db.close)
         self.jobs = sources.parse_greenhouse("stripe", GREENHOUSE) + sources.parse_lever("acme", LEVER)
 
     def test_refetch_keeps_status_and_adds_nothing(self):
@@ -125,12 +210,49 @@ class Tracker(unittest.TestCase):
         self.assertEqual(self.store.add_jobs(other_office), (0, 1))
         self.assertEqual(self.store.counts(), {"new": 2})
 
+    def test_workday_memory_is_cleared_when_the_title_filter_changes(self):
+        self.store.add_workday_seen("site", ["/job/a", "/job/b"], "titles-v1")
+        self.assertEqual(self.store.workday_seen("titles-v1"), {"site": {"/job/a", "/job/b"}})
+        self.assertEqual(self.store.workday_seen("titles-v2"), {})
+
     def test_low_score_is_skipped_and_applied_counts_today(self):
         self.store.add_jobs(self.jobs)
         self.assertEqual(self.store.set_score(self.jobs[1].id, 40, "weak", {}, min_score=70), "skipped")
         self.store.set_applied(self.jobs[0].id)
         self.assertEqual(self.store.applied_today(), 1)
         self.assertEqual(len(self.store.find("stripe")), 1)
+
+
+class FetchCommand(unittest.TestCase):
+    def test_fetch_stores_matches_and_remembers_workday_postings(self):
+        import contextlib, io
+        from unittest import mock
+        from jobhunt import cli
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        db = Store(Path(tmp.name) / "jobs.db")
+        self.addCleanup(db.db.close)
+        site = Workday.TOKEN
+        board = {"jobs": [GREENHOUSE["jobs"][0] | {"title": "Community Manager"}, GREENHOUSE["jobs"][0] | {"id": 2}]}
+        asked = []
+
+        def fake(source, token, search=None, seen=None):
+            asked.append((source, seen))
+            if source == "workday":
+                return 5, [sources.parse_workday(site, WORKDAY_DETAIL)], ["/job/a", "/job/b"]
+            return 2, sources.parse_greenhouse(token, board), []
+
+        settings = config.Settings(search=Search(titles=["community"], max_age_days=0))
+        with mock.patch.object(cli.config, "load_settings", lambda: settings), \
+             mock.patch.object(cli.config, "load_companies", lambda: [("greenhouse", "stripe"), ("workday", site)]), \
+             mock.patch.object(cli, "store", lambda: db), mock.patch.object(cli.sources, "fetch_company", fake):
+            for _ in range(2):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(cli.main(["fetch"]), 0)
+        self.assertIn("7 postings from 2 boards: 2 match", out.getvalue())
+        self.assertEqual(db.counts(), {"new": 2})
+        # The second run was told which Workday postings the first one had read.
+        self.assertEqual([seen for source, seen in asked if source == "workday"], [None, {"/job/a", "/job/b"}])
 
 
 class Config(unittest.TestCase):
@@ -159,7 +281,8 @@ class FieldMatching(unittest.TestCase):
         p = profile()
         for label, expected in [("First Name*", "Ada"), ("Last Name", "Lovelace"), ("Full name ✱", "Ada Lovelace"),
                                 ("Name", "Ada Lovelace"), ("Email", "ada@example.com"), ("Phone Number", "+1 555 0100"),
-                                ("LinkedIn URL", "https://linkedin.com/in/ada"), ("Current location", "London"),
+                                ("LinkedIn URL", "https://linkedin.com/in/ada"), ("Current location", "London, UK"),
+                                ("City", "London"), ("Location (City)", "London, UK"),
                                 ("Preferred First Name", "Ada"), ("Most Recent Employer", "Analytical Engines"),
                                 ("Who is your current or previous employer?", "Analytical Engines")]:
             self.assertEqual(choose_value(field(label), p), expected, label)

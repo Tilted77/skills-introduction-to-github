@@ -48,17 +48,30 @@ def cmd_companies(args) -> None:
         print(f"{len(known)} boards. Add more with `python -m jobhunt companies stripe figma ...`.")
         return
     for name in args.names:
-        token = name.strip().lower()
-        hits = []
-        for source in config.SOURCES:
+        if "myworkdayjobs.com" in name.lower():
+            # Workday sites are added by address: there is no way to look one up by company name.
             try:
-                count = len(sources.fetch_company(source, token))
-            except sources.FeedError:
+                token = sources.workday_token(name)
+                hits = [("workday", sources.workday_total(token))]
+            except ValueError:
+                print(f"{name}: paste the careers-site address, like https://osu.wd1.myworkdayjobs.com/OSUCareers")
                 continue
-            if count:
-                hits.append((source, count))
-        if not hits:
-            print(f"{token}: no board found on Greenhouse, Lever or Ashby. Try the name from their careers-page URL.")
+            except sources.FeedError as e:
+                print(f"{name}: could not read that Workday site ({e}). Check the address.")
+                continue
+        else:
+            token = name.strip().lower()
+            hits = []
+            for source in ("greenhouse", "lever", "ashby"):
+                try:
+                    count = sources.fetch_company(source, token)[0]
+                except sources.FeedError:
+                    continue
+                if count:
+                    hits.append((source, count))
+            if not hits:
+                print(f"{token}: no board found on Greenhouse, Lever or Ashby. Try the name from their careers-page "
+                      "URL, or paste the address if their careers site is on myworkdayjobs.com.")
         for source, count in hits:
             if (source, token) in known:
                 print(f"{source}:{token} already listed ({count} open jobs).")
@@ -74,22 +87,29 @@ def cmd_fetch(args) -> None:
     companies = config.load_companies()
     db = store()
 
+    search_key = json.dumps([settings.search.titles, settings.search.exclude_titles])
+    read_before = db.workday_seen(search_key)
+    if any(source == "workday" for source, _ in companies):
+        print("Workday sites limit how fast they can be read. The first run takes several minutes; later runs are quick.")
+
     def pull(pair):
         try:
-            return pair, sources.fetch_company(*pair), None
+            return pair, *sources.fetch_company(*pair, settings.search, read_before.get(pair[1])), None
         except sources.FeedError as e:
-            return pair, [], str(e)
+            return pair, 0, [], [], str(e)
 
     seen = matched = added = repeats = 0
     with ThreadPoolExecutor(max_workers=8) as pool:
-        for (source, token), jobs, error in pool.map(pull, companies):
+        for (source, token), total, jobs, read, error in pool.map(pull, companies):
             if error:
-                print(f"  {source}:{token}  failed: {error}")
+                print(f"  {source}:{token}  failed: {error}", flush=True)
                 continue
             keep = [j for j in jobs if sources.matches(j, settings.search)]
             new, same_role = db.add_jobs(keep)
-            seen, matched, added, repeats = seen + len(jobs), matched + len(keep), added + new, repeats + same_role
-            print(f"  {source}:{token}  {len(jobs)} open, {len(keep)} match, {new} new")
+            if source == "workday":
+                db.add_workday_seen(token, read, search_key)
+            seen, matched, added, repeats = seen + total, matched + len(keep), added + new, repeats + same_role
+            print(f"  {source}:{token}  {total} open, {len(keep)} match, {new} new", flush=True)
     print(f"Read {seen} postings from {len(companies)} boards: {matched} match your search, {added} are new."
           + (f" Ignored {repeats} repeat listings of a role already tracked." if repeats else ""))
     if added:

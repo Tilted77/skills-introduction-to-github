@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     score INTEGER, verdict TEXT, score_detail TEXT, materials_dir TEXT, applied_at TEXT, note TEXT
 )
 """
+# Workday postings already read, so later runs stop at the first page of familiar ones.
+# `search` records which title filter was in force: change the titles and the memory is cleared.
+SEEN_SCHEMA = "CREATE TABLE IF NOT EXISTS workday_seen (site TEXT, path TEXT, search TEXT, PRIMARY KEY (site, path))"
 JOB_FIELDS = ("source", "company", "company_name", "title", "location", "remote",
               "url", "apply_url", "description", "posted_at")
 
@@ -32,6 +35,21 @@ class Store:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.execute(SCHEMA)
+        self.db.execute(SEEN_SCHEMA)
+        self.db.commit()
+
+    def workday_seen(self, search_key: str) -> dict[str, set[str]]:
+        """site -> paths already read under this title filter. Forgets everything read under another."""
+        self.db.execute("DELETE FROM workday_seen WHERE search != ?", (search_key,))
+        self.db.commit()
+        seen: dict[str, set[str]] = {}
+        for site, path in self.db.execute("SELECT site, path FROM workday_seen"):
+            seen.setdefault(site, set()).add(path)
+        return seen
+
+    def add_workday_seen(self, site: str, paths: list[str], search_key: str) -> None:
+        self.db.executemany("INSERT OR IGNORE INTO workday_seen VALUES (?, ?, ?)",
+                            [(site, path, search_key) for path in paths])
         self.db.commit()
 
     def add_jobs(self, jobs: list[Job]) -> tuple[int, int]:

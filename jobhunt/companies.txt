@@ -1,4 +1,5 @@
 # One job board per line, as source:name. Every entry here was checked and had open jobs.
+# Workday sites are listed by address instead: workday:host/site (see the end of this file).
 # This starter list leans towards tech companies. Replace it with employers in your field:
 #   python -m jobhunt companies <name> <name> ...
 # looks each name up on Greenhouse, Lever and Ashby and appends the boards it finds.
@@ -154,3 +155,18 @@ ashby:branchinsurance
 ashby:airgarage
 lever:loopreturns
 lever:gopuff
+
+# Workday careers sites. Add one by pasting its address:
+#   python -m jobhunt companies https://osu.wd1.myworkdayjobs.com/OSUCareers
+# Columbus-area employers
+workday:nationwide.wd1.myworkdayjobs.com/Nationwide_Career
+workday:osu.wd1.myworkdayjobs.com/OSUCareers
+workday:nationwidechildrens.wd5.myworkdayjobs.com/NCHCareers
+workday:ohiohealth.wd5.myworkdayjobs.com/OhioHealthJobs
+workday:cardinalhealth.wd1.myworkdayjobs.com/EXT
+workday:huntington.wd12.myworkdayjobs.com/HNBcareers
+workday:cscc.wd1.myworkdayjobs.com/CSCC_ext
+workday:columbusairports.wd1.myworkdayjobs.com/Columbus_Airports1
+workday:unitedchurchhomes.wd1.myworkdayjobs.com/uchcareers
+# National nonprofit
+workday:theirc.wd1.myworkdayjobs.com/External_Careers

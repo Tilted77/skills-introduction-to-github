@@ -47,7 +47,9 @@ COLLECT_JS = r"""
       n: n++, tag: el.tagName.toLowerCase(), type,
       id: el.id || '', name: el.getAttribute('name') || '',
       label: clean(label), near, placeholder: el.getAttribute('placeholder') || '',
-      combobox: el.getAttribute('role') === 'combobox' || el.hasAttribute('aria-autocomplete') || el.hasAttribute('list'),
+      // Pick-from-a-list fields discard typed text. Lever's location box is one but does not say so.
+      combobox: el.getAttribute('role') === 'combobox' || el.hasAttribute('aria-autocomplete') || el.hasAttribute('list')
+        || el.id === 'location-input',
       required: el.required || el.getAttribute('aria-required') === 'true' || /[*✱]/.test(label),
       // A dropdown still on its first option ("Select...") counts as unanswered.
       empty: type === 'file' ? !(el.files && el.files.length)
@@ -85,6 +87,7 @@ RULES: list[tuple[str, re.Pattern]] = [(key, re.compile(pattern)) for key, patte
     ("phone", r"\bphone|\bmobile\b|telephone"),
     ("current_company", r"(current|most recent)( or (previous|most recent))? (company|employer)|\[org\]"),
     ("current_title", r"(current|most recent)( or (previous|most recent))? (job )?title"),
+    ("city", r"^city\b"),
     ("location", r"current location|\blocation\b|\bcity\b|where are you (currently )?(based|located)"),
     ("full_name", r"\bfull[ _-]?name|\blegal name|^name\b|\byour name|\[name\]|_systemfield_name"),
 ]]
@@ -167,14 +170,14 @@ def prefill(page, profile: Profile, cover_letter: str = "", cover_letter_file: P
             name = display_name(f)
             done = False
             try:
+                if not f["empty"]:
+                    continue  # already has a value (an earlier fill, browser autofill, the site's resume parser)
                 if f["type"] == "file":
                     file = choose_file(f, profile.resume_pdf, cover_letter_file)
-                    if file and f["empty"]:
+                    if file:
                         target.set_input_files(str(file))
                         kind = "Cover letter" if file == cover_letter_file else "Resume"
                         name, done = f"{kind} ({file.name})", True
-                elif not f["empty"]:
-                    continue  # already has a value (browser autofill, or the site's own resume parser)
                 elif f["tag"] == "select":
                     option = choose_option(f, profile)
                     if option:

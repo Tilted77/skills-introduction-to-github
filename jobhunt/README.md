@@ -14,7 +14,7 @@ It never submits anything on its own.
 | 3 | `tailor` | For the best matches, Claude drafts a cover letter, resume bullets to lead with, and a list of things to check. |
 | 4 | `apply` | Opens each form in a browser window, fills your details, attaches your resume and cover letter, and waits for you. |
 
-Jobs come from Greenhouse, Lever and Ashby, the systems many companies use for their careers pages.
+Jobs come from Greenhouse, Lever, Ashby and Workday, the systems many employers use for their careers pages.
 LinkedIn and Indeed are not used: they forbid automation and restrict accounts that try it.
 
 ## Setup (once)
@@ -42,6 +42,13 @@ Then:
    ```
 
    The name is the one in the company's careers-page URL (`jobs.lever.co/spotify` is `spotify`).
+
+   Many large employers, hospitals and universities use Workday. Their careers address contains
+   `myworkdayjobs.com`; paste the whole address to add one:
+
+   ```bash
+   python -m jobhunt companies https://osu.wd1.myworkdayjobs.com/OSUCareers
+   ```
 5. Get a Claude API key from https://platform.claude.com and set it in your terminal:
 
    ```bash
@@ -61,6 +68,7 @@ During `apply`, each job gets a browser tab. Fields the tool filled are outlined
 fields it left for you in orange. Finish the form, press Submit, then answer in the terminal:
 
 - `a` you submitted it
+- `f` fill the page now showing (for forms with several pages, and for Workday)
 - `s` skip this job for good
 - `l` leave it in the queue for later
 - `q` stop for now
@@ -89,6 +97,20 @@ Captchas appear when you press Submit and are yours to solve.
 
 One role is tracked once per company even if it is posted for several offices, so you are not
 queued to apply to the same job twice.
+
+## Workday employers
+
+Workday works differently from the other three, in two ways.
+
+**Reading jobs is slow.** Workday pauses anyone who asks too fast, so the tool asks about once a
+second and waits when told to. The first `fetch` can take several minutes. Later runs are quick,
+because the tool remembers what it has read and stops at the first page of familiar postings.
+Only postings from the last 30 days are read: beyond that Workday does not give a date.
+
+**Applying needs an account with each employer.** `apply` opens the job page and stops. Press
+Apply, sign in or create your account, and when the form appears press `f` in the terminal to
+fill that page. Press `f` again on each new page. The browser remembers your sign-in for next time.
+Workday also offers its own "Autofill with Resume" option on the first screen.
 
 ## Without an API key
 
