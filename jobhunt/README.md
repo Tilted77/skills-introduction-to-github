@@ -17,7 +17,26 @@ It never submits anything on its own.
 Jobs come from Greenhouse, Lever, Ashby and Workday, the systems many employers use for their careers pages.
 LinkedIn and Indeed are not used: they forbid automation and restrict accounts that try it.
 
-## Setup (once)
+## Windows: the easy way
+
+1. Press the Windows key, type `PowerShell`, press Enter.
+2. Paste this line and press Enter:
+
+   ```
+   irm https://raw.githubusercontent.com/Tilted77/skills-introduction-to-github/claude/happy-einstein-n3qja8/jobhunt/install.ps1 | iex
+   ```
+
+It installs Python if needed, downloads the tool into a `jobhunt` folder in your user folder, asks for
+your Claude API key, and puts a **Job Hunt** shortcut on your desktop. Double-click the shortcut for a
+numbered menu: apply, find new jobs, score, draft, show the list.
+
+If a file named `jobhunt-personal.zip` (your profile, search settings, resume and drafts) is in your
+Downloads folder, the installer copies those into place. Running the line again later updates the tool
+and keeps your files.
+
+The key is saved in `api_key.txt` inside the `jobhunt` folder. Keep that file private.
+
+## Setup by hand (once)
 
 You need Python 3.11 or newer.
 
@@ -49,11 +68,13 @@ Then:
    ```bash
    python -m jobhunt companies https://osu.wd1.myworkdayjobs.com/OSUCareers
    ```
-5. Get a Claude API key from https://platform.claude.com and set it in your terminal:
+5. Get a Claude API key from https://platform.claude.com (Settings, then API keys) and save it:
 
    ```bash
-   export ANTHROPIC_API_KEY="sk-ant-..."     # Windows PowerShell: $env:ANTHROPIC_API_KEY="sk-ant-..."
+   python -m jobhunt key
    ```
+
+   It is stored in `api_key.txt` in this folder. Setting the `ANTHROPIC_API_KEY` environment variable works too.
 
 ## Daily use
 
@@ -72,6 +93,8 @@ fields it left for you in orange. Finish the form, press Submit, then answer in 
 - `s` skip this job for good
 - `l` leave it in the queue for later
 - `q` stop for now
+
+`python -m jobhunt menu` offers the same steps as a numbered menu.
 
 Other commands:
 
@@ -125,7 +148,7 @@ Workday also offers its own "Autofill with Resume" option on the first screen.
   As a rough estimate at current list prices for the default model: about 2 cents per job scored and
   5 cents per application tailored. `fetch` filters by title and location first, so only matching jobs are scored.
   Change the model under `[scoring]` in `config.toml`.
-- `config.toml`, `profile.toml`, `resume.*`, `data/` and `browser-profile/` are in `.gitignore`.
+- `config.toml`, `profile.toml`, `api_key.txt`, `resume.*`, `data/` and `browser-profile/` are in `.gitignore`.
   Git will not upload them. Do not remove those lines if this repository is public.
 - `apply` stops at `daily_limit` applications a day (default 25). Fewer, better-matched applications get more replies.
 

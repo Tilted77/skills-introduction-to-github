@@ -1,6 +1,7 @@
 # Personal data: never commit these.
 config.toml
 profile.toml
+api_key.txt
 resume.*
 data/
 browser-profile/

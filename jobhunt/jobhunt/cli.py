@@ -263,6 +263,50 @@ def cmd_export(args) -> None:
     print(f"Wrote {len(rows)} jobs to {out}")
 
 
+def cmd_key(args, ask=input) -> None:
+    print("Get a key at https://platform.claude.com (Settings, then API keys). It starts with sk-ant-")
+    key = ask("Paste your Claude API key and press Enter (or just Enter to cancel): ").strip()
+    if not key:
+        print("No key saved.")
+        return
+    config.save_api_key(key)
+    print(f"Saved in {ROOT / config.KEY_FILE}. Keep that file private.")
+
+
+MENU = [
+    ("Apply: open the next applications in a browser (you check each one and press Submit)", ["apply"]),
+    ("Find new jobs (Workday employers can take several minutes)", ["fetch"]),
+    ("Score new jobs against my resume (needs an API key)", ["score"]),
+    ("Draft cover letters for the best matches (needs an API key)", ["tailor"]),
+    ("Show my list", ["list", "--limit", "30"]),
+    ("Save the list as a spreadsheet", ["export"]),
+    ("Add or change my API key", ["key"]),
+]
+
+
+def cmd_menu(args, ask=input) -> None:
+    """A numbered menu, for running the tool without typing commands."""
+    while True:
+        db = store()
+        counts = db.counts()
+        db.db.close()
+        print("\n=== Job Hunt ===")
+        print(f"Ready to apply: {counts.get('drafted', 0) + counts.get('scored', 0)}   "
+              f"New, not scored yet: {counts.get('new', 0)}   Applied: {counts.get('applied', 0)}"
+              + ("" if config.load_api_key() else "   (no API key saved)"))
+        for number, (label, _) in enumerate(MENU, 1):
+            print(f"  {number}. {label}")
+        print("  0. Close")
+        choice = ask("Type a number and press Enter: ").strip()
+        if choice in ("0", "q", ""):
+            return
+        if not choice.isdigit() or not 1 <= int(choice) <= len(MENU):
+            print("Please type one of the numbers shown.")
+            continue
+        print()
+        main(MENU[int(choice) - 1][1])
+
+
 def cmd_apply(args) -> None:
     from .apply import run_session
     run_session(store(), config.load_settings(), config.load_profile(), limit=args.limit)
@@ -295,10 +339,15 @@ def build_parser() -> argparse.ArgumentParser:
     add("apply", cmd_apply, "open each drafted job, prefill the form, and wait for you to submit").add_argument(
         "--limit", type=int, default=None)
     add("export", cmd_export, "write the tracker to data/tracker.csv")
+    add("key", cmd_key, "save your Claude API key on this computer")
+    add("menu", cmd_menu, "a numbered menu, for running everything without typing commands")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):  # a job title with an unusual character must not crash a Windows console
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     args = build_parser().parse_args(argv)
     try:
         args.func(args)

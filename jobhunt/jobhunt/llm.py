@@ -9,7 +9,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from .config import ConfigError
+from .config import ConfigError, load_api_key
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -85,7 +85,9 @@ class Assistant:
         except ImportError as e:
             raise ConfigError("The anthropic package is missing: pip install -r requirements.txt") from e
         self._anthropic = anthropic
-        self.client = client or anthropic.Anthropic()
+        # With no key of our own the SDK still looks for other credentials (an `ant auth login` profile).
+        key = load_api_key()
+        self.client = client or (anthropic.Anthropic(api_key=key) if key else anthropic.Anthropic())
         self.model = model
         # The same candidate block goes on every request, so it is the cached prefix.
         self.candidate = f"<resume>\n{resume}\n</resume>\n\n<preferences>\n{preferences or 'None given.'}\n</preferences>"
@@ -108,10 +110,11 @@ class Assistant:
         except TypeError as e:  # the SDK raises this when it finds no credentials at all
             if "authentication" not in str(e):
                 raise
-            raise ConfigError("No Claude API key found. Set ANTHROPIC_API_KEY (see the README), "
-                              "or use `score --no-llm` for keyword scoring.") from e
+            raise ConfigError("No Claude API key found. Add one with `python -m jobhunt key` "
+                              "(or 'Add my API key' in the menu).") from e
         except anthropic.AuthenticationError as e:
-            raise ConfigError("Claude rejected the API key. Check ANTHROPIC_API_KEY.") from e
+            raise ConfigError("Claude rejected the API key. Enter it again with `python -m jobhunt key` "
+                              "and check that the Console account has credits.") from e
         except anthropic.PermissionDeniedError as e:
             raise ConfigError(f"This API key cannot use {self.model}: {e.message}") from e
         except anthropic.NotFoundError as e:

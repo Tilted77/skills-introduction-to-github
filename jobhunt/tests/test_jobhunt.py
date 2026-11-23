@@ -306,6 +306,82 @@ class Drafts(unittest.TestCase):
             self.assertEqual(apply.load_drafts({"materials_dir": None}), ("", None, []))
 
 
+class MenuAndKey(unittest.TestCase):
+    KEY = "sk-ant-" + "x" * 40
+
+    def test_key_is_saved_to_a_file_and_read_back(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict("os.environ", {}, clear=False) as env:
+            env.pop("ANTHROPIC_API_KEY", None)
+            root = Path(tmp)
+            self.assertIsNone(config.load_api_key(root))
+            for bad in ("hello", "sk-ant-short", "sk-ant-" + "x" * 30 + " oops"):
+                with self.assertRaises(config.ConfigError):
+                    config.save_api_key(bad, root)
+            config.save_api_key(f'  "{self.KEY}"  ', root)
+            self.assertEqual(config.load_api_key(root), self.KEY)
+            env["ANTHROPIC_API_KEY"] = "sk-ant-from-environment"
+            self.assertEqual(config.load_api_key(root), "sk-ant-from-environment")
+
+    def test_menu_runs_the_chosen_commands_until_closed(self):
+        import contextlib, io
+        from unittest import mock
+        from jobhunt import cli
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        answers = iter(["9", "abc", "5", "6", "0"])
+        with mock.patch.object(cli, "ROOT", Path(tmp.name)), contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.store().add_jobs(sources.parse_greenhouse("stripe", GREENHOUSE))
+            cli.cmd_menu(None, ask=lambda prompt: next(answers))
+        text = out.getvalue()
+        self.assertEqual(text.count("Please type one of the numbers shown."), 2)
+        self.assertIn("New, not scored yet: 1", text)
+        self.assertIn("Backend Engineer", text)                       # 5: the list
+        self.assertTrue((Path(tmp.name) / "data" / "tracker.csv").exists())  # 6: the spreadsheet
+
+
+class Installer(unittest.TestCase):
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("jobhunt_install", config.ROOT / "install.py")
+        self.install = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.install)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def test_takes_only_your_files_from_the_newest_package(self):
+        import os, zipfile
+        downloads, root = self.dir / "Downloads", self.dir / "jobhunt"
+        downloads.mkdir()
+        root.mkdir()
+        self.assertIsNone(self.install.find_personal_package([downloads, self.dir / "missing"]))
+        for name, stamp in (("jobhunt-personal.zip", 1000), ("jobhunt-personal (1).zip", 2000)):
+            with zipfile.ZipFile(downloads / name, "w") as z:
+                z.writestr("profile.toml", name)
+                z.writestr("config.toml", "c")
+                z.writestr("resume.pdf", "r")
+                z.writestr("data/materials/job/cover_letter.txt", "letter")
+                z.writestr("jobhunt/cli.py", "must not overwrite code")
+                z.writestr("../outside.txt", "must not escape")
+                z.writestr("data/../../outside2.txt", "must not escape")
+            os.utime(downloads / name, (stamp, stamp))
+        package = self.install.find_personal_package([downloads])
+        self.assertEqual(package.name, "jobhunt-personal (1).zip")
+        taken = self.install.unpack_personal(package, root)
+        self.assertEqual(sorted(taken), ["config.toml", "data/materials/job/cover_letter.txt", "profile.toml", "resume.pdf"])
+        self.assertEqual((root / "profile.toml").read_text(), "jobhunt-personal (1).zip")
+        self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["Downloads", "jobhunt"])
+        self.assertFalse((root / "jobhunt").exists())
+
+    def test_shortcut_opens_the_menu_from_the_install_folder(self):
+        shortcut = self.install.write_shortcut(Path("C:/Users/ada/jobhunt"), self.dir)
+        text = shortcut.read_bytes().decode()
+        self.assertEqual(shortcut.name, "Job Hunt.bat")
+        self.assertIn('cd /d "', text)
+        self.assertIn('"\r\n".venv\\Scripts\\python.exe" -m jobhunt menu\r\n', text)
+
+
 class Config(unittest.TestCase):
     def test_companies_file(self):
         with tempfile.TemporaryDirectory() as tmp:

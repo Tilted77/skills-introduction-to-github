@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import tomllib
 import unicodedata
@@ -65,7 +66,7 @@ def _read_toml(path: Path, example: str) -> dict:
         raise ConfigError(f"{path.name} not found. Run `python -m jobhunt init`, then edit {path.name} "
                           f"(it starts as a copy of {example}).")
     try:
-        return tomllib.loads(path.read_text(encoding="utf-8"))
+        return tomllib.loads(path.read_text(encoding="utf-8-sig"))  # -sig: Notepad may add a byte-order mark
     except tomllib.TOMLDecodeError as e:
         raise ConfigError(f"{path.name} has a syntax error: {e}") from e
 
@@ -115,6 +116,25 @@ def load_profile(root: Path = ROOT) -> Profile:
         resume_pdf=path("resume_pdf"), resume_text_file=path("resume_text"),
         answers={str(k).lower(): str(v) for k, v in raw.get("answers", {}).items()},
     )
+
+
+KEY_FILE = "api_key.txt"
+
+
+def load_api_key(root: Path = ROOT) -> str | None:
+    """The Claude API key: from the environment, else from api_key.txt in the jobhunt folder."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    path = root / KEY_FILE
+    if not key and path.exists():
+        key = path.read_text(encoding="utf-8-sig").strip()
+    return key or None
+
+
+def save_api_key(key: str, root: Path = ROOT) -> None:
+    key = key.strip().strip('"').strip("'")
+    if not key.startswith("sk-ant-") or len(key) < 30 or " " in key:
+        raise ConfigError("That does not look like a Claude API key. It starts with sk-ant- and has no spaces.")
+    (root / KEY_FILE).write_text(key + "\n", encoding="utf-8")
 
 
 def clean_resume_text(text: str) -> str:
@@ -168,7 +188,7 @@ def load_companies(root: Path = ROOT) -> list[tuple[str, str]]:
     if not path.exists():
         raise ConfigError("companies.txt not found.")
     out: list[tuple[str, str]] = []
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         try:
             pair = parse_company_line(line)
         except ValueError:
