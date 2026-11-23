@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from . import config, sources
+from .answers import SLOTS, Answers, pick_option
 from .config import ConfigError
 from .llm import Assistant, LLMError, Posting, keyword_score
 from .store import Store
@@ -273,6 +274,37 @@ def cmd_key(args, ask=input) -> None:
     print(f"Saved in {ROOT / config.KEY_FILE}. Keep that file private.")
 
 
+def cmd_answers(args, ask=input) -> None:
+    """Go through the standard application questions once; the answers are filled in on later forms."""
+    answers = Answers(ROOT)
+    print("Standard application questions. Your answers stay on this computer and are filled in on future forms.")
+    print("For each: press Enter to keep the answer shown, type a new one, type - to clear it, or type q to stop.")
+    print("Skip any question you would rather answer yourself on each form.\n")
+    for number, slot in enumerate(SLOTS, 1):
+        print(f"{number} of {len(SLOTS)}: {slot.ask}")
+        for i, choice in enumerate(slot.choices, 1):
+            print(f"     {i}. {choice}")
+        while True:
+            reply = ask(f"     [{answers.standard.get(slot.key) or 'no answer saved'}] > ").strip()
+            if slot.choices and reply and reply not in ("-", "q", "Q"):
+                picked = slot.choices[int(reply) - 1] if reply.isdigit() and 1 <= int(reply) <= len(slot.choices) \
+                    else pick_option(reply, slot.choices)
+                if not picked:
+                    print("     Please type one of the numbers shown.")
+                    continue
+                reply = picked
+            break
+        if reply.lower() == "q":
+            break
+        if reply == "-":
+            answers.standard.pop(slot.key, None)
+        elif reply:
+            answers.standard[slot.key] = reply
+    answers.reviewed = True
+    answers.save()
+    print(f"\nSaved. {len(answers.standard)} of {len(SLOTS)} standard questions have an answer.")
+
+
 MENU = [
     ("Apply: open the next applications in a browser (you check each one and press Submit)", ["apply"]),
     ("Find new jobs (Workday employers can take several minutes)", ["fetch"]),
@@ -281,6 +313,7 @@ MENU = [
     ("Show my list", ["list", "--limit", "30"]),
     ("Save the list as a spreadsheet", ["export"]),
     ("Add or change my API key", ["key"]),
+    ("Answer the standard application questions (once; they are filled in for you afterwards)", ["answers"]),
 ]
 
 
@@ -291,9 +324,11 @@ def cmd_menu(args, ask=input) -> None:
         counts = db.counts()
         db.db.close()
         print("\n=== Job Hunt ===")
+        saved = Answers(ROOT)
         print(f"Ready to apply: {counts.get('drafted', 0) + counts.get('scored', 0)}   "
               f"New, not scored yet: {counts.get('new', 0)}   Applied: {counts.get('applied', 0)}"
               + ("" if config.load_api_key() else "   (no API key saved)"))
+        print(f"Standard answers saved: {len(saved.standard)} of {len(SLOTS)}, plus {len(saved.learned)} remembered from forms")
         for number, (label, _) in enumerate(MENU, 1):
             print(f"  {number}. {label}")
         print("  0. Close")
@@ -307,8 +342,12 @@ def cmd_menu(args, ask=input) -> None:
         main(MENU[int(choice) - 1][1])
 
 
-def cmd_apply(args) -> None:
+def cmd_apply(args, ask=input) -> None:
     from .apply import run_session
+    if not Answers(ROOT).reviewed:
+        print("Before your first application: a few standard questions, asked once.\n")
+        cmd_answers(args, ask)
+        print()
     run_session(store(), config.load_settings(), config.load_profile(), limit=args.limit)
 
 
@@ -340,6 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit", type=int, default=None)
     add("export", cmd_export, "write the tracker to data/tracker.csv")
     add("key", cmd_key, "save your Claude API key on this computer")
+    add("answers", cmd_answers, "answer the standard application questions once, to be filled in on later forms")
     add("menu", cmd_menu, "a numbered menu, for running everything without typing commands")
     return parser
 

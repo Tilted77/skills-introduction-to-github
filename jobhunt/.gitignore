@@ -2,6 +2,7 @@
 config.toml
 profile.toml
 api_key.txt
+answers.json
 resume.*
 data/
 browser-profile/

@@ -306,6 +306,144 @@ class Drafts(unittest.TestCase):
             self.assertEqual(apply.load_drafts({"materials_dir": None}), ("", None, []))
 
 
+CHOICES = """<script>function press(b) { [...b.parentElement.children].forEach(x => x.setAttribute('aria-pressed', x === b)); }</script>
+<form onsubmit="document.title='SUBMITTED'; return false">
+<div><label for="fn">First Name*</label><input id="fn"></div>
+<fieldset><legend>Are you legally authorized to work in the United States?*</legend>
+  <label><input type="radio" name="auth" value="y"> Yes</label><label><input type="radio" name="auth" value="n"> No</label></fieldset>
+<fieldset><legend>Are you legally entitled to work in Canada?</legend>
+  <label><input type="radio" name="ca" value="y"> Yes</label><label><input type="radio" name="ca" value="n"> No</label></fieldset>
+<div><label>Gender <select id="g"><option>Select ...</option><option>Male</option><option>Female</option>
+  <option>Decline to self-identify</option></select></label></div>
+<div><label>Will you now or in the future require sponsorship?</label>
+  <div><button type="button" aria-pressed="false" onclick="press(this)">Yes</button><button type="button" aria-pressed="false" onclick="press(this)">No</button></div></div>
+<div><label><input type="checkbox" id="agree"> I agree to the privacy policy*</label></div>
+<div><div>When can you start?*</div><input id="start" placeholder="Pick date..."></div>
+<div><div>What are your pronouns?</div><input id="pro" placeholder="Type your response"></div>
+<div><div>Race (check all that apply)</div>
+  <label><input type="checkbox" name="race" value="w"> White</label><label><input type="checkbox" name="race" value="a"> Asian</label></div>
+<button type="submit">Submit</button></form>"""
+
+
+class StandardAnswers(unittest.TestCase):
+    def setUp(self):
+        from jobhunt import answers
+        self.m = answers
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.answers = answers.Answers(Path(self.tmp.name))
+
+    def test_recognises_standard_questions(self):
+        for label, key in [("Are you authorized to work in the United States?", "authorized_us"),
+                           ("Are you authorized to work in the country where the job is located?", "authorized_us"),
+                           ("Will you now or in the future require immigration sponsorship to work for Acme?", "sponsorship"),
+                           ("Are you currently, or have you previously, worked for Acme?", "worked_here_before"),
+                           ("What is your gender or gender identity?", "gender"), ("Military Veteran Status", "veteran"),
+                           ("Do you identify as a member of the LGBT2QIA+ community?", "lgbt"),
+                           ("What is your race and/or ethnicity? Please check all that apply.", "race"),
+                           ("Which state or province do you currently live in?", "state"), ("Country", "country"),
+                           ("When can you start a new role?", "start"), ("How did you hear about this job?", "how_heard"),
+                           ("Are you able to work from our Austin office three days per week?", "onsite")]:
+            self.assertEqual(getattr(self.m.slot_for(label), "key", None), key, label)
+        for label in ("Are you legally entitled to work in Canada?", "Do you require sponsorship to work in the UK?",
+                      "Are you authorized to work in the US, and will you require sponsorship?", "Why do you want this job?"):
+            self.assertIsNone(self.m.slot_for(label), label)
+        self.assertEqual(self.m.slot_for("Are you authorized to work in the US without sponsorship?").key, "authorized_us")
+
+    def test_matches_an_answer_to_each_forms_wording(self):
+        pick = self.m.pick_option
+        self.assertEqual(pick("No", ["Yes", "No"]), "No")
+        self.assertEqual(pick("No", ["Yes, I have a disability", "No, I do not have a disability", "I do not want to answer"]),
+                         "No, I do not have a disability")
+        self.assertEqual(pick("Decline to answer", ["Man", "Woman", "I don't wish to answer"]), "I don't wish to answer")
+        self.assertEqual(pick("Male", ["Female", "Male", "Decline to self-identify"]), "Male")
+        self.assertEqual(pick("Male", ["Woman", "Man", "Non-binary"]), "Man")
+        self.assertEqual(pick("I am not a protected veteran", ["I identify as one or more of the classifications of protected veteran",
+                                                             "I am not a Protected Veteran", "I don't wish to answer"]), "I am not a Protected Veteran")
+        self.assertEqual(pick("United States", ["Canada +1", "United States +1", "United Kingdom +44"]), "United States +1")
+        self.assertEqual(pick("Ohio", ["(US) Idaho", "(US) Ohio", "(CA) Ontario"]), "(US) Ohio")
+        self.assertEqual(pick("Ohio", ["OK", "OH", "OR"]), "OH")
+        self.assertEqual(pick("White", ["Asian", "White (Not Hispanic or Latino)"]), "White (Not Hispanic or Latino)")
+        self.assertIsNone(pick("Yes", ["Citizen", "Permanent resident", "Visa holder"]))  # no guessing
+        self.assertIsNone(pick("New", ["New York", "New Jersey"]))                         # ambiguous
+        self.assertIsNone(pick("", ["Yes", "No"]))
+
+    def test_remembers_what_you_answered(self):
+        a = self.answers
+        self.assertEqual(a.learn([("Are you authorized to work in the United States?*", "Yes"),
+                                  ("Are you legally entitled to work in Canada?", "No"),
+                                  ("What is your favourite colour?", " Green "), ("Empty one", "")]), 3)
+        self.assertEqual(a.standard, {"authorized_us": "Yes"})
+        again = self.m.Answers(Path(self.tmp.name))
+        self.assertEqual(again.find("Are you authorized to work in Germany or the United States"), None)
+        self.assertEqual(again.find("Are you legally authorized to work in the US?"), "Yes")       # by pattern
+        self.assertEqual(again.find("are you legally entitled to work in canada"), "No")          # exact question
+        self.assertEqual(again.find("What is your favourite colour"), "Green")
+        self.assertIsNone(again.find("What is your favourite food?"))
+        # A different answer to one exact question is kept for that question only.
+        self.assertEqual(again.learn([("Are you authorized to work in the United States?", "No")]), 1)
+        self.assertEqual(again.find("Are you authorized to work in the United States?"), "No")
+        self.assertEqual(again.find("Work authorization"), "Yes")
+        self.assertEqual(again.learn([("Are you authorized to work in the United States?", "No")]), 0)
+
+    def test_questionnaire(self):
+        import contextlib, io
+        from unittest import mock
+        from jobhunt import cli
+        replies = iter(["1", "maybe", "2", "", "-", "q"])
+        with mock.patch.object(cli, "ROOT", Path(self.tmp.name)), contextlib.redirect_stdout(io.StringIO()) as out:
+            self.answers.standard["relocate"] = "No"
+            self.answers.standard["onsite"] = "Yes"
+            self.answers.save()
+            cli.cmd_answers(None, ask=lambda prompt: next(replies))
+        saved = self.m.Answers(Path(self.tmp.name))
+        self.assertEqual(saved.standard, {"authorized_us": "Yes", "sponsorship": "No", "relocate": "No"})
+        self.assertTrue(saved.reviewed)
+        self.assertIn("Please type one of the numbers shown.", out.getvalue())
+
+    def test_fills_choices_on_a_form_and_reads_them_back(self):
+        try:
+            from playwright.sync_api import Error, sync_playwright
+        except ImportError:
+            self.skipTest("playwright not installed")
+        from jobhunt.prefill import FORM_JS, WATCH_JS, answers_worth_keeping
+        self.answers.standard = {"authorized_us": "Yes", "sponsorship": "No", "gender": "Male", "race": "White",
+                                 "start": "Two weeks after an offer", "pronouns": "they/them"}
+        with sync_playwright() as p:
+            try:
+                browser = p.chromium.launch()
+            except Error:
+                self.skipTest("no browser installed (playwright install chromium)")
+            context = browser.new_context()
+            reported = []
+            context.expose_binding("jobhuntAnswers", lambda source, payload: reported.append(json.loads(payload)))
+            context.add_init_script(WATCH_JS)
+            page = context.new_page()
+            page.route("https://form.test/", lambda route: route.fulfill(body=CHOICES, content_type="text/html"))
+            page.goto("https://form.test/")
+            person = profile()
+            report = prefill(page, person, answers=self.answers)
+            checked = lambda name: page.eval_on_selector_all(f"input[name={name}]", "els => els.filter(e => e.checked).map(e => e.value)")
+            self.assertEqual((checked("auth"), checked("ca"), checked("race")), (["y"], [], ["w"]))
+            self.assertEqual(page.eval_on_selector("#g", "e => e.options[e.selectedIndex].text"), "Male")
+            self.assertEqual(page.eval_on_selector_all("button[aria-pressed=true]", "els => els.map(e => e.innerText)"), ["No"])
+            self.assertFalse(page.is_checked("#agree"))                       # consent is never ticked for you
+            self.assertEqual(page.input_value("#start"), "")                   # words are not typed into a date box
+            self.assertEqual(page.input_value("#pro"), "they/them")
+            self.assertEqual(report.needs_you, ["When can you start?", "I agree to the privacy policy"])
+            self.assertNotEqual(page.title(), "SUBMITTED")
+
+            expected = [("Are you legally authorized to work in the United States?", "Yes"), ("Gender", "Male"),
+                        ("Will you now or in the future require sponsorship?", "No"), ("What are your pronouns?", "they/them"),
+                        ("Race (check all that apply)", "White")]
+            fields = page.evaluate(FORM_JS, False)["fields"]
+            self.assertEqual(sorted(answers_worth_keeping(fields, person)), sorted(expected))
+            page.wait_for_timeout(2000)  # the page reports its answers by itself, for forms that vanish on Submit
+            self.assertTrue(reported)
+            self.assertEqual(sorted(answers_worth_keeping(reported[-1], person)), sorted(expected))
+            browser.close()
+
+
 class MenuAndKey(unittest.TestCase):
     KEY = "sk-ant-" + "x" * 40
 
@@ -368,9 +506,12 @@ class Installer(unittest.TestCase):
             os.utime(downloads / name, (stamp, stamp))
         package = self.install.find_personal_package([downloads])
         self.assertEqual(package.name, "jobhunt-personal (1).zip")
+        (root / "config.toml").write_text("mine")  # a file you already have is never replaced
         taken = self.install.unpack_personal(package, root)
-        self.assertEqual(sorted(taken), ["config.toml", "data/materials/job/cover_letter.txt", "profile.toml", "resume.pdf"])
+        self.assertEqual(sorted(taken), ["data/materials/job/cover_letter.txt", "profile.toml", "resume.pdf"])
+        self.assertEqual((root / "config.toml").read_text(), "mine")
         self.assertEqual((root / "profile.toml").read_text(), "jobhunt-personal (1).zip")
+        self.assertEqual(self.install.unpack_personal(package, root), [])
         self.assertEqual(sorted(p.name for p in self.dir.iterdir()), ["Downloads", "jobhunt"])
         self.assertFalse((root / "jobhunt").exists())
 

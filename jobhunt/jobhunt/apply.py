@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .answers import Answers, normalize
 from .config import ROOT, ConfigError, Profile, Settings
-from .prefill import open_form, prefill
+from .prefill import FORM_JS, WATCH_JS, answers_worth_keeping, open_form, prefill, question_of
 from .store import Store
 
 PROMPT = "[a] I submitted it   [f] fill this page   [s] skip this job   [l] leave for later   [q] quit  > "
@@ -29,8 +30,22 @@ def load_drafts(row) -> tuple[str, Path | None, list[str]]:
     return letter, (letter_file if letter_file.exists() else None), result.get("check_before_sending", [])
 
 
-def fill_and_report(page, profile: Profile, letter: str, letter_file: Path | None) -> None:
-    report = prefill(page, profile, letter, letter_file)
+def remember_answers(browser, watched: dict, answers: Answers, profile: Profile) -> int:
+    """Save the reusable answers from the form just completed. `watched` holds what the pages reported
+    while you worked; a form still on screen is read once more, since it is the most up to date."""
+    for page in browser.pages:
+        for frame in page.frames:
+            try:
+                for f in frame.evaluate(FORM_JS, False)["fields"]:
+                    if f["value"]:
+                        watched[normalize(question_of(f))] = f
+            except Exception:
+                pass  # a page that has closed or moved on; what it reported earlier is already in `watched`
+    return answers.learn(answers_worth_keeping(list(watched.values()), profile))
+
+
+def fill_and_report(page, profile: Profile, letter: str, letter_file: Path | None, answers: Answers | None = None) -> None:
+    report = prefill(page, profile, letter, letter_file, answers)
     print("  Filled: " + (", ".join(report.filled) or "nothing recognised on this page"))
     if report.needs_you:
         print("  Needs you: " + ", ".join(report.needs_you))
@@ -62,8 +77,22 @@ def run_session(store: Store, settings: Settings, profile: Profile, limit: int |
         except BrowserError as e:
             raise ConfigError(f"Could not open a browser window ({str(e).splitlines()[0]}). "
                               "Run `playwright install chromium` once, on a computer with a screen.") from e
+        answers = Answers(ROOT)
+        watched: dict[str, dict] = {}  # question -> the control and its current answer, for the job on screen
+
+        def on_answers(source, payload: str) -> None:
+            try:
+                for f in json.loads(payload):
+                    watched[normalize(question_of(f))] = f
+            except (ValueError, KeyError, TypeError):
+                pass
+
+        # Forms vanish on Submit, so each page reports its answers as you fill it in.
+        browser.expose_binding("jobhuntAnswers", on_answers)
+        browser.add_init_script(WATCH_JS)
         submitted = 0
         for i, row in enumerate(queue, 1):
+            watched.clear()
             letter, letter_file, checks = load_drafts(row)
             print(f"[{i}/{len(queue)}] {row['title']} at {row['company_name']}  ({row['location']})")
             print(f"  Score {row['score']}: {row['verdict']}")
@@ -78,7 +107,7 @@ def run_session(store: Store, settings: Settings, profile: Profile, limit: int |
                     print(WORKDAY_HINT)
                 else:
                     open_form(page, row["apply_url"])
-                    fill_and_report(page, profile, letter, letter_file)
+                    fill_and_report(page, profile, letter, letter_file, answers)
             except BrowserError as e:
                 print(f"  Could not load the form: {str(e).splitlines()[0]}\n  Posting: {row['url']}")
             choice = ""
@@ -87,12 +116,15 @@ def run_session(store: Store, settings: Settings, profile: Profile, limit: int |
                 if choice == "f":
                     try:
                         # The form may have moved on to a new page or tab since the job was opened.
-                        fill_and_report(browser.pages[-1], profile, letter, letter_file)
+                        fill_and_report(browser.pages[-1], profile, letter, letter_file, answers)
                     except BrowserError as e:
                         print(f"  Could not fill this page: {str(e).splitlines()[0]}")
             if choice == "a":
                 store.set_applied(row["id"])
                 submitted += 1
+                new = remember_answers(browser, watched, answers, profile)
+                if new:
+                    print(f"  Remembered {new} of your answers for future applications.")
             elif choice == "s":
                 store.set_skipped(row["id"], "skipped by you")
             try:

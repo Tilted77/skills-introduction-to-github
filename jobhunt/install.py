@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PERSONAL = "jobhunt-personal"          # the zip of your own files, as downloaded from the chat
-KEEP = ("config.toml", "profile.toml")  # single files allowed out of that zip; plus resume.* and data/
+KEEP = ("config.toml", "profile.toml", "answers.json")  # single files allowed out of that zip; plus resume.* and data/
 
 
 def venv_python(root: Path) -> Path:
@@ -46,7 +46,8 @@ def find_personal_package(folders: list[Path]) -> Path | None:
 
 
 def unpack_personal(package: Path, root: Path) -> list[str]:
-    """Copy your files out of the zip. Only the expected names are taken; nothing can land outside `root`."""
+    """Copy your files out of the zip. Only the expected names are taken, nothing can land outside `root`,
+    and a file you already have is never replaced: your tracker and saved answers survive a reinstall."""
     taken = []
     with zipfile.ZipFile(package) as archive:
         for item in archive.infolist():
@@ -56,6 +57,8 @@ def unpack_personal(package: Path, root: Path) -> list[str]:
             if item.is_dir() or not wanted or ".." in parts or name.startswith("/"):
                 continue
             target = root.joinpath(*parts)
+            if target.exists():
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(item) as source, open(target, "wb") as out:
                 shutil.copyfileobj(source, out)
@@ -87,7 +90,7 @@ def main(argv: list[str]) -> None:
     package = find_personal_package([Path.home() / "Downloads", ROOT])
     if package:
         taken = unpack_personal(package, ROOT)
-        print(f"  Copied {len(taken)} files from {package.name} (your profile, search settings, resume and drafts).")
+        print(f"  Added {len(taken)} new files from {package.name}. Files you already had were left as they are.")
     elif (ROOT / "profile.toml").exists():
         print("  Already in place.")
     else:

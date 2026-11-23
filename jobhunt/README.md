@@ -108,13 +108,30 @@ python -m jobhunt export               # data/tracker.csv, opens in Excel or Goo
 
 Before `apply`, you can edit any draft in `data/materials/<job>/cover_letter.txt`. The edited file is what gets used.
 
+## Standard questions
+
+Most applications ask the same things: work authorization, sponsorship, relocation, your address and
+school, and the voluntary demographic questions. You answer them once and the tool fills them in from
+then on, whether the form uses a text box, a dropdown or multiple choice.
+
+- The first time you choose Apply, the tool asks the standard questions. Press Enter to keep an answer,
+  type a new one, or skip any you would rather answer on each form. `python -m jobhunt answers` (or the
+  menu) reopens the list.
+- When you mark an application as submitted, the tool remembers the other short answers you gave on that
+  form and reuses them when the same question appears again. Long written answers are not remembered.
+- A question about another country ("authorized to work in Canada?") is never answered from your US
+  answer, a yes/no answer is never guessed from a loosely similar option, and a consent or agreement box
+  is never ticked for you.
+
+Your answers are kept in `answers.json` in this folder, on your computer only.
+
 ## What the form filler does and does not do
 
 It fills: name, email, phone, LinkedIn, GitHub, website, current company and title, resume upload,
-cover letter, and any question you saved an answer for under `[answers]` in `profile.toml`.
+cover letter, and every question you have a saved answer for (see Standard questions).
 
-It leaves for you: location pickers and other search-as-you-type dropdowns, checkboxes and
-multiple-choice questions, demographic questions, and free-text questions it has no answer for.
+It leaves for you: the city or location picker, consent boxes, date pickers, written questions
+specific to one employer, and any question it has no saved answer for or cannot match with confidence.
 The terminal lists the required fields it could detect; check the form itself for the rest.
 Captchas appear when you press Submit and are yours to solve.
 
@@ -148,7 +165,7 @@ Workday also offers its own "Autofill with Resume" option on the first screen.
   As a rough estimate at current list prices for the default model: about 2 cents per job scored and
   5 cents per application tailored. `fetch` filters by title and location first, so only matching jobs are scored.
   Change the model under `[scoring]` in `config.toml`.
-- `config.toml`, `profile.toml`, `api_key.txt`, `resume.*`, `data/` and `browser-profile/` are in `.gitignore`.
+- `config.toml`, `profile.toml`, `api_key.txt`, `answers.json`, `resume.*`, `data/` and `browser-profile/` are in `.gitignore`.
   Git will not upload them. Do not remove those lines if this repository is public.
 - `apply` stops at `daily_limit` applications a day (default 25). Fewer, better-matched applications get more replies.
 
