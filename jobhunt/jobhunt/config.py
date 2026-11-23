@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -115,6 +117,13 @@ def load_profile(root: Path = ROOT) -> Profile:
     )
 
 
+def clean_resume_text(text: str) -> str:
+    """Tidy text pulled out of a PDF: split ligatures ("staﬃng" -> "staffing"), collapse layout spacing."""
+    text = unicodedata.normalize("NFKC", text)
+    text = "\n".join(re.sub(r"[ \t]+", " ", line).strip() for line in text.splitlines())
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
 def load_resume_text(profile: Profile) -> str:
     """Resume as plain text for the model: the text file if given, else extracted from the PDF."""
     if profile.resume_text_file:
@@ -128,7 +137,10 @@ def load_resume_text(profile: Profile) -> str:
             from pypdf import PdfReader
         except ImportError as e:
             raise ConfigError("Reading the resume PDF needs pypdf: pip install -r requirements.txt") from e
-        text = "\n".join((page.extract_text() or "") for page in PdfReader(str(profile.resume_pdf)).pages).strip()
+        # Layout mode keeps each line together. The default mode returns some PDFs (Google Docs
+        # exports, for one) as a single word per line.
+        pages = PdfReader(str(profile.resume_pdf)).pages
+        text = clean_resume_text("\n".join((page.extract_text(extraction_mode="layout") or "") for page in pages))
     else:
         raise ConfigError("profile.toml: set resume_pdf (and optionally resume_text).")
     if len(text) < 200:

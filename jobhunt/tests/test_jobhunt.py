@@ -299,6 +299,10 @@ class Config(unittest.TestCase):
             with self.assertRaises(config.ConfigError):
                 config.load_companies(Path(tmp))
 
+    def test_resume_text_cleanup(self):
+        raw = "Tom   Lapas  |  Westerville\n\n\n\n      ❖    Handle  staﬃng and ﬁeld  work.   "
+        self.assertEqual(config.clean_resume_text(raw), "Tom Lapas | Westerville\n\n❖ Handle staffing and field work.")
+
     def test_examples_load(self):
         with tempfile.TemporaryDirectory() as tmp:
             for name in ("config", "profile"):
