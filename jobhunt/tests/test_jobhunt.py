@@ -290,6 +290,22 @@ class FetchCommand(unittest.TestCase):
         self.assertEqual([a[1:] for a in asked if a[0] == "workday"], [(None, None), ({"/job/a", "/job/b"}, 40)])
 
 
+class Drafts(unittest.TestCase):
+    def test_drafts_are_found_relative_to_the_jobhunt_folder(self):
+        from jobhunt import apply
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "data" / "materials" / "job1"
+            folder.mkdir(parents=True)
+            (folder / "application.json").write_text(json.dumps({"cover_letter": "old", "check_before_sending": ["x"]}))
+            (folder / "cover_letter.txt").write_text("Edited by hand\n")
+            real = apply.ROOT
+            apply.ROOT = Path(tmp)
+            self.addCleanup(setattr, apply, "ROOT", real)
+            letter, letter_file, checks = apply.load_drafts({"materials_dir": "data/materials/job1"})
+            self.assertEqual((letter, letter_file, checks), ("Edited by hand", folder / "cover_letter.txt", ["x"]))
+            self.assertEqual(apply.load_drafts({"materials_dir": None}), ("", None, []))
+
+
 class Config(unittest.TestCase):
     def test_companies_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -300,8 +316,8 @@ class Config(unittest.TestCase):
                 config.load_companies(Path(tmp))
 
     def test_resume_text_cleanup(self):
-        raw = "Tom   Lapas  |  Westerville\n\n\n\n      ❖    Handle  staﬃng and ﬁeld  work.   "
-        self.assertEqual(config.clean_resume_text(raw), "Tom Lapas | Westerville\n\n❖ Handle staffing and field work.")
+        raw = "Ada   Lovelace  |  London\n\n\n\n      ❖    Handle  staﬃng and ﬁeld  work.   "
+        self.assertEqual(config.clean_resume_text(raw), "Ada Lovelace | London\n\n❖ Handle staffing and field work.")
 
     def test_examples_load(self):
         with tempfile.TemporaryDirectory() as tmp:

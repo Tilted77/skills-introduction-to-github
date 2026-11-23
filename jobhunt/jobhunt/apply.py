@@ -18,7 +18,7 @@ def load_drafts(row) -> tuple[str, Path | None, list[str]]:
     """(cover letter text, cover letter file, things to check) for a job; empty if it was not tailored."""
     if not row["materials_dir"]:
         return "", None, []
-    folder = Path(row["materials_dir"])
+    folder = ROOT / row["materials_dir"]  # an absolute path from an older version is kept as is
     try:
         result = json.loads((folder / "application.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -70,7 +70,7 @@ def run_session(store: Store, settings: Settings, profile: Profile, limit: int |
             for check in checks:
                 print(f"  Check: {check}")
             if row["materials_dir"]:
-                print(f"  Drafts: {row['materials_dir']}/summary.md")
+                print(f"  Drafts: {ROOT / row['materials_dir'] / 'summary.md'}")
             page = browser.new_page()
             try:
                 if row["source"] == "workday":

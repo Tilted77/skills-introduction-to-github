@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -165,7 +166,7 @@ def cmd_score(args) -> None:
 
 
 def write_materials(row, result: dict) -> Path:
-    folder = ROOT / "data" / "materials" / row["id"].replace(":", "_")
+    folder = ROOT / "data" / "materials" / re.sub(r"[^A-Za-z0-9.-]+", "_", row["id"])
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "application.json").write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
     (folder / "cover_letter.txt").write_text(result["cover_letter"].strip() + "\n", encoding="utf-8")
@@ -202,7 +203,8 @@ def cmd_tailor(args) -> None:
                 print(f"  failed  {label}: {error}")
                 continue
             folder = write_materials(row, result)
-            db.set_drafted(row["id"], folder)
+            # Stored relative to the jobhunt folder, so the data folder can be moved to another computer.
+            db.set_drafted(row["id"], folder.relative_to(ROOT))
             done += 1
             flags = len(result["check_before_sending"])
             print(f"  drafted  {label}" + (f"  ({flags} to check)" if flags else ""))
@@ -238,7 +240,7 @@ def cmd_show(args) -> None:
             if detail.get(key):
                 print(f"  {key}: " + "; ".join(detail[key]))
     if row["materials_dir"]:
-        print(f"\nDrafts: {row['materials_dir']}")
+        print(f"\nDrafts: {ROOT / row['materials_dir']}")
     if args.full:
         print("\n" + row["description"])
 
